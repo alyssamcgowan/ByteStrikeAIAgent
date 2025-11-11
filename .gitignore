@@ -1,0 +1,6 @@
+__pycache__/
+.env
+.venv/
+Byte Strike/
+chroma_store/
+testData/
