@@ -37,7 +37,7 @@ def extract_text_from_email(msg):
     return full_text
 
 
-def clean_mbox(input_path, output_path="cleaned_emails.json"):
+def clean_mbox(input_path, output_path="emailsCleaned/cleaned_emails.json"):
     mbox = mailbox.mbox(input_path)
     cleaned_data = []
 
@@ -69,5 +69,5 @@ def clean_mbox(input_path, output_path="cleaned_emails.json"):
 
 
 if __name__ == "__main__":
-    input_file = "emails/mail.mbox"
+    input_file = "emailsUncleaned/mail.mbox"
     clean_mbox(input_file)
