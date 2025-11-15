@@ -12,7 +12,7 @@ load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 persistDir = "chroma_store/"
 
-embeddingModel = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en-v1.5")
+embeddingModel = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5",)
 
 vectorstore = Chroma(
     persist_directory=persistDir,
@@ -68,6 +68,8 @@ qa_chain = RetrievalQA.from_chain_type(
 )
 
 query = "What are key qualifications to look for in the search for a new CTO for ByteStrike?"
+
+#print top k documents retrieved to be used for this query.
 
 # retrieved_docs = retriever.invoke(query)
 # print("\n--- Retrieved Contexts ---")
