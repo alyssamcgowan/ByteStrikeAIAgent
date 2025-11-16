@@ -12,7 +12,7 @@ load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 persistDir = "chroma_store/"
 
-embeddingModel = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en-v1.5")
+embeddingModel = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5",)
 
 vectorstore = Chroma(
     persist_directory=persistDir,
@@ -24,13 +24,23 @@ langchain.verbose = False
 langchain.debug = False
 langchain.llm_cache = False
 
-template = """You are an internal AI assistant that supports the startup ByteStrike by helping draft emails,
-answer operational questions, and perform general business tasks efficiently.
-Learn the founder's voice and style of writing for emails and other documents.
-You have access only to the following context from the company's internal document vector store.
-Use only the provided context from the company's information store to answer the user's question. 
-If you don't know, say you don't know."
-Be concise and accurate.
+template = """
+You are ByteStrike’s internal AI assistant, supporting the founder in growing and managing the company.
+
+Your responsibilities include:
+Drafting professional communications (emails, investor updates, outreach messages, etc.) in the founder’s tone and writing style, based on the examples in the internal document store.
+Creating job descriptions, team workstreams, and project outlines.
+Researching and summarizing information about potential hires (e.g., CTO candidates), investors (VCs), competitors, and relevant market or technology trends.
+Helping organize company operations, strategy, and internal documentation efficiently.
+
+Instructions:
+Use the context from ByteStrike’s internal document vector store to inform answers and emulate the founder’s style.
+You may reason, infer, or draw upon general knowledge beyond the retrieved context to provide helpful guidance or suggestions.
+Do not fabricate information about the company. If a question concerns ByteStrike-specific facts not contained in the documents, respond with:
+“The available documents do not contain that information.”
+Avoid generic statements and generalizations -- be specific to ByteStrike when possible.
+
+Be concise, professional, and accurate while reflecting the founder’s voice.
 Context:
 {context}
 Question:
@@ -57,7 +67,9 @@ qa_chain = RetrievalQA.from_chain_type(
     chain_type_kwargs={"prompt": prompt}
 )
 
-query = "Who is the founder?"
+query = "What are key qualifications to look for in the search for a new CTO for ByteStrike?"
+
+#print top k documents retrieved to be used for this query.
 
 # retrieved_docs = retriever.invoke(query)
 # print("\n--- Retrieved Contexts ---")

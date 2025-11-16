@@ -4,3 +4,5 @@ __pycache__/
 Byte Strike/
 chroma_store/
 testData/
+emails/
+.json
