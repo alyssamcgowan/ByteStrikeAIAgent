@@ -6,9 +6,13 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
 from langchain_huggingface.embeddings import HuggingFaceEmbeddings
 from langchain_core.documents import Document
+import hashlib
+
+def content_hash(text):
+    return hashlib.md5(text.encode("utf-8")).hexdigest()
 
 #config
-persistDir = "chroma_store/"
+persistDir = "fake/"
 dataDir = "dataToEmbed/"
 
 driveDataDir = os.path.join(dataDir, "ByteStrikeDrive/")
@@ -44,11 +48,16 @@ if os.path.exists(emailsJson):
         data = json.load(f)
 
     for i, msg in enumerate(data):
-        text = msg.get("text", "")
-        if text.strip():
+        body_text = msg.get("body", "").strip()
+        if body_text:  
             json_docs.append(Document(
-                page_content=text,
-                metadata={"source": "email", "email_id": msg.get("id", i)}
+                page_content=body_text,
+                metadata={
+                    "source": "email",
+                    "from": msg.get("from", ""),
+                    "to": msg.get("to", ""),
+                    "email_id": i
+                }
             ))
     print(f"Loaded {len(json_docs)} email documents.")
 else:
@@ -64,7 +73,7 @@ for filename in os.listdir(minutesLinkDir):
             d.metadata["source"] = "minutes"
             d.metadata["filename"] = filename
         minutes_docs.extend(docs)
-print(f"Loaded {len(minutes_docs)} minutes link documents.")
+print(f"Loaded {len(minutes_docs)} MinutesLink documents.")
 
 #slack
 slack_docs = []
@@ -84,14 +93,6 @@ print(f"Loaded {len(slack_docs)} Slack messages.")
 all_docs = web_docs + pdf_docs + json_docs + minutes_docs + slack_docs
 print(f"Total combined documents: {len(all_docs)}")
 
-splitter = RecursiveCharacterTextSplitter(
-    chunk_size=1000,
-    chunk_overlap=150,
-    separators=["\n\n", "\n", " ", ""]
-)
-chunks = splitter.split_documents(all_docs)
-print(f"Split into {len(chunks)} chunks.")
-
 embeddingModel = HuggingFaceEmbeddings(
     model_name="BAAI/bge-base-en-v1.5",
     encode_kwargs={"normalize_embeddings": True}
@@ -101,10 +102,37 @@ vectorstore = Chroma(
     persist_directory=persistDir,
     embedding_function=embeddingModel
 )
+existing = vectorstore.get(include=["metadatas"])
+existing_hashes = set()
 
-batch_size = 64
-for i in tqdm(range(0, len(chunks), batch_size), desc="Embedding batches"):
-    batch = chunks[i:i + batch_size]
+for md in existing["metadatas"]:
+    if md and "hash" in md:
+        existing_hashes.add(md["hash"]) 
+
+
+splitter = RecursiveCharacterTextSplitter(
+    chunk_size=1000,
+    chunk_overlap=150,
+    separators=["\n\n", "\n", " ", ""]
+)
+
+chunks = splitter.split_documents(all_docs)
+
+new_chunks = []
+for chunk in chunks:
+    h = content_hash(chunk.page_content)
+    if h not in existing_hashes:
+        chunk.metadata["hash"] = h
+        new_chunks.append(chunk)
+
+print(f"Total chunks: {len(chunks)}")
+print(f"New chunks to embed: {len(new_chunks)}")
+
+
+batch_size = 512
+
+for i in tqdm(range(0, len(new_chunks), batch_size), desc="Embedding new content"):
+    batch = new_chunks[i:i + batch_size]
     vectorstore.add_documents(batch)
 
 print(f"Stored all embeddings persistently in: {persistDir}")

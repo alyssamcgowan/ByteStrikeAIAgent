@@ -3,7 +3,7 @@ from langchain_openai import ChatOpenAI
 from langchain_chroma import Chroma
 from langchain_huggingface.embeddings import HuggingFaceEmbeddings
 from langchain_core.prompts import PromptTemplate
-from langchain_classic.chains import RetrievalQA
+from sentence_transformers import CrossEncoder
 
 import os
 from dotenv import load_dotenv
@@ -12,12 +12,45 @@ load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 persistDir = "chroma_store/"
 
-embeddingModel = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5",)
+embeddingModel = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
+reranker = CrossEncoder("BAAI/bge-reranker-base")
+
+def multistage_retrieve(query, vectorstore, k_initial=40, k_final=7):
+    """
+    Stage 1: Retrieve k_initial dense-vector candidates.
+    Stage 2: Re-rank them with a cross-encoder.
+    Stage 3: Return top k_final documents.
+    """
+    # Stage 1 — high-recall retrieval
+    retriever = vectorstore.as_retriever(search_kwargs={"k": k_initial})
+    initial_docs = retriever.invoke(query)
+
+    if not initial_docs:
+        return []
+
+    # Prepare pairs for cross-encoder
+    pairs = [(query, doc.page_content) for doc in initial_docs]
+
+    # Stage 2 — relevance scoring
+    scores = reranker.predict(pairs)
+
+    # Sort candidate docs by score
+    ranked = sorted(
+        zip(scores, initial_docs),
+        key=lambda x: x[0],
+        reverse=True
+    )
+
+    # Stage 3 — top-k
+    final_docs = [doc for score, doc in ranked[:k_final]]
+    return final_docs
+
 
 vectorstore = Chroma(
     persist_directory=persistDir,
     embedding_function=embeddingModel
 )
+
 print("Number of stored vectors:", vectorstore._collection.count())
 
 langchain.verbose = False
@@ -25,7 +58,8 @@ langchain.debug = False
 langchain.llm_cache = False
 
 template = """
-You are ByteStrike’s internal AI assistant, supporting the founder in growing and managing the company.
+You are ByteStrike’s internal AI assistant, supporting the founder in growing and managing the company. 
+Queries referring to "us," "we," "our," etc. refer to ByteStrike and its team. 
 
 Your responsibilities include:
 Drafting professional communications (emails, investor updates, outreach messages, etc.) in the founder’s tone and writing style, based on the examples in the internal document store.
@@ -36,8 +70,7 @@ Helping organize company operations, strategy, and internal documentation effici
 Instructions:
 Use the context from ByteStrike’s internal document vector store to inform answers and emulate the founder’s style.
 You may reason, infer, or draw upon general knowledge beyond the retrieved context to provide helpful guidance or suggestions.
-Do not fabricate information about the company. If a question concerns ByteStrike-specific facts not contained in the documents, respond with:
-“The available documents do not contain that information.”
+Do not fabricate information about the company.
 Avoid generic statements and generalizations -- be specific to ByteStrike when possible.
 
 Be concise, professional, and accurate while reflecting the founder’s voice.
@@ -48,38 +81,22 @@ Question:
 """
 
 llm = ChatOpenAI(
-    model="gpt-4o-mini",
+    model="gpt-5-nano",
     temperature=0,
     api_key=api_key
 )
-
-retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
 
 prompt = PromptTemplate(
     input_variables=["context", "question"],
     template=template
 )
 
-qa_chain = RetrievalQA.from_chain_type(
-    llm=llm,
-    retriever=retriever,
-    chain_type="stuff", 
-    chain_type_kwargs={"prompt": prompt}
-)
+query = "What is our business plan?"
 
-query = "What are key qualifications to look for in the search for a new CTO for ByteStrike?"
 
-#print top k documents retrieved to be used for this query.
+retrieved_docs = multistage_retrieve(query, vectorstore)
+context = "\n\n".join([d.page_content for d in retrieved_docs])
+final_prompt = prompt.format(context=context, question=query)
 
-# retrieved_docs = retriever.invoke(query)
-# print("\n--- Retrieved Contexts ---")
-# if not retrieved_docs:
-#     print("No documents were retrieved for this query.")
-# else:
-#     for i, doc in enumerate(retrieved_docs, start=1):
-#         print(f"\n[Document {i}]")
-#         print(doc.page_content[:500])  # print first 500 chars
-#         print("---")
-
-result = qa_chain.invoke({"query": query})
-print(result["result"])
+result = llm.invoke(final_prompt)
+print(result.content)
