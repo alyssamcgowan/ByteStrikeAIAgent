@@ -8,16 +8,24 @@ from langchain_classic.chains import RetrievalQA
 import os
 from dotenv import load_dotenv
 
+
 load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 persistDir = "chroma_store/"
 
-embeddingModel = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5",)
+embeddingModel = HuggingFaceEmbeddings(
+    model_name="BAAI/bge-base-en-v1.5",
+    encode_kwargs={"normalize_embeddings": True}
+) #base -> small b/c bad ram
 
 vectorstore = Chroma(
     persist_directory=persistDir,
     embedding_function=embeddingModel
 )
+first_vector = vectorstore._collection.get(include=["embeddings"], ids=[vectorstore._collection.get()["ids"][0]])["embeddings"][0]
+print("Embedding dimension of first vector:", len(first_vector))
+
+
 print("Number of stored vectors:", vectorstore._collection.count())
 
 langchain.verbose = False
@@ -67,7 +75,7 @@ qa_chain = RetrievalQA.from_chain_type(
     chain_type_kwargs={"prompt": prompt}
 )
 
-query = "What are key qualifications to look for in the search for a new CTO for ByteStrike?"
+# query = "Who is the CEO of ByteStrike?"
 
 #print top k documents retrieved to be used for this query.
 
@@ -80,6 +88,19 @@ query = "What are key qualifications to look for in the search for a new CTO for
 #         print(f"\n[Document {i}]")
 #         print(doc.page_content[:500])  # print first 500 chars
 #         print("---")
+# query = input("What do you want to search: ")
 
-result = qa_chain.invoke({"query": query})
-print(result["result"])
+# result = qa_chain.invoke({"query": query})
+# print(result["result"])
+
+
+def agent(query: str) -> str:
+    """Run a query against the ByteStrike RAG system and return the result."""
+    result = qa_chain.invoke({"query": query})
+    return result["result"]
+
+if __name__ == "__main__":
+    # simple manual test
+    test_query = input("What do you want to search? ")
+    print(agent(test_query))
+
