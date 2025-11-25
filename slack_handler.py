@@ -1,75 +1,83 @@
 import os
-from dotenv import load_dotenv
-from slack_bolt import App
-from slack_bolt.adapter.socket_mode import SocketModeHandler
-
 import re
+import asyncio
+from dotenv import load_dotenv
 
-from agent import agent  # your existing function
+from slack_bolt.async_app import AsyncApp
+from slack_bolt.adapter.socket_mode.aiohttp import AsyncSocketModeHandler
+
+from agent import agent 
 
 load_dotenv()
 
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
 SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN")
 
-app = App(token=SLACK_BOT_TOKEN)
+app = AsyncApp(token=SLACK_BOT_TOKEN)
 
+
+# ---------------------------
+# Utility: async-safe cleaning
+# ---------------------------
+def clean_input(text: str) -> str:
+    if not text:
+        return ""
+    return re.sub(r"<@[^>]+>", "", text).strip()
+
+
+# ---------------------------
+# Event: @mention
+# ---------------------------
 @app.event("app_mention")
-def handle_mention(event, say, logger):
-    print("=== APP MENTION RECEIVED ===")
-    print(event)
-    print("=============================")
+async def handle_mention(event, say, logger):
+    cleaned = clean_input(event.get("text", ""))
 
-    user_input = event.get("text", "")
-
-    # Remove the bot mention text like <@U12345>
-    cleaned_input = re.sub(r"<@[^>]+>", "", user_input).strip()
-
-    print(f"Processing mention query: '{cleaned_input}'")
-
-    if not cleaned_input:
-        say("Hi there! What would you like to know about ByteStrike?")
+    if not cleaned:
+        await say("Hi! What would you like to know?")
         return
 
     try:
-        response = agent(cleaned_input)
-        print(f"Agent returned: {response}")
-        say(response)
+        reply = await agent(cleaned)      # <-- IMPORTANT
+        await say(reply)
     except Exception as e:
-        print(f"Agent error: {str(e)}")
-        say("I'm having trouble processing your request right now. Please try again.")
+        logger.error(f"Agent error: {e}")
+        await say("Sorry, something went wrong.")
 
 
-# --- Respond to Direct Messages (DMs) ---
+# ---------------------------
+# Event: Direct Messages
+# ---------------------------
 @app.event("message")
-def handle_dm(event, say, logger):
-    # Ignore messages that:
-    # (1) Came from a bot, including itself
-    # (2) Are not direct messages ("im")
+async def handle_dm(event, say, logger):
+
+    # ignore bot messages
     if event.get("bot_id"):
         return
+
     if event.get("channel_type") != "im":
         return
 
-    print("=== DIRECT MESSAGE RECEIVED ===")
-    print(event)
-    print("===============================")
+    cleaned = event.get("text", "").strip()
 
-    user_input = event.get("text", "").strip()
-    print(f"Processing DM query: '{user_input}'")
-
-    if not user_input:
-        say("How can I help?", thread_ts=event.get("ts"))
+    if not cleaned:
+        await say("How can I help?", thread_ts=event.get("ts"))
         return
 
     try:
-        response = agent(user_input)
-        print(f"Agent returned: {response}")
-        say(response, thread_ts=event.get("ts"))
+        reply = await agent(cleaned)
+        await say(reply, thread_ts=event.get("ts"))
     except Exception as e:
-        print(f"Agent error: {str(e)}")
-        say("I'm having trouble processing your request right now. Please try again.")
+        logger.error(f"Agent error: {e}")
+        await say("Sorry, something went wrong.", thread_ts=event.get("ts"))
+
+
+# ---------------------------
+# Main entry
+# ---------------------------
+async def main():
+    handler = AsyncSocketModeHandler(app, SLACK_APP_TOKEN)
+    await handler.start_async()
+
 
 if __name__ == "__main__":
-    handler = SocketModeHandler(app, SLACK_APP_TOKEN)
-    handler.start()
+    asyncio.run(main())
