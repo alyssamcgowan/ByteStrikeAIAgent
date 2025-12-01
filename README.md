@@ -8,7 +8,8 @@ Progress:
 - Acquired OpenAI key for chat response capability
 - LLM prompting and vector retrieval for basic question answering
 - Cleaning and embedding for more data: ByteStrike website, Google Drive documents, emails, MinutesLink notes, Slack messages
+- Slack bot that integrates RAG pipeline and LLM prompting 
 
 Next:
 - Optimize/finetune for specific internal ByteStrike tasks
-- Frontend for streamlined usability and testing
+- Dockerize
