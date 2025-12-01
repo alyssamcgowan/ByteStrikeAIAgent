@@ -1,10 +1,11 @@
-# agent.py (ASYNC VERSION WITH LOGGING)
+# agent.py (ASYNC STREAMING VERSION)
 import os
-import asyncio
+from typing import AsyncGenerator
 from dotenv import load_dotenv
 
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate
+from langchain_core.runnables import RunnablePassthrough
 
 from rag_pipeline import retrieve_docs  # async version of your RAG pipeline
 
@@ -13,9 +14,10 @@ OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 
 # -------------------------------------
 # Load LLM once (supports async calls)
+# Using gpt-3.5-turbo as it's efficient for RAG streaming
 # -------------------------------------
 llm = ChatOpenAI(
-    model="gpt-5-nano",
+    model="gpt-5-nano", 
     temperature=0,
     api_key=OPENAI_KEY
 )
@@ -51,34 +53,67 @@ prompt = PromptTemplate(
 
 
 # -------------------------------------
-# ASYNC Agent Function
+# Build the LangChain RAG Chain
 # -------------------------------------
-async def agent(query: str) -> str:
-    print("\n==============================")
-    print(f"AGENT RECEIVED QUERY: {query}")
-    print("Starting retrieval...")
-    print("==============================")
+
+# 1. Define the Context Formatter
+# This function prepares the context from the list of documents
+def format_docs(docs):
+    return "\n\n".join(d.page_content for d in docs)
+
+# 2. Define the main chain structure
+# We use RunnablePassthrough to pass the 'question' key through to the prompt
+# while using the 'context' from the retrieval step.
+rag_chain = (
+    # This part prepares the inputs for the final prompt
+    RunnablePassthrough.assign(
+        context=lambda x: format_docs(x["documents"])
+    )
+    | prompt  # Apply the prompt template
+    | llm     # Call the LLM
+)
+
+
+# -------------------------------------
+# ASYNC STREAMING Agent Function
+# -------------------------------------
+async def stream_agent(query: str) -> AsyncGenerator[str, None]:
+    print("\n==============================", flush=True)
+    print(f"AGENT RECEIVED QUERY: {query}", flush=True)
+    print("Starting retrieval...", flush=True)
+    print("==============================", flush=True)
 
     # 1. Retrieve docs async
+    # The 'retrieve_docs' function is assumed to return a List[Document]
     docs = await retrieve_docs(query)
 
-    print(f"Retrieved {len(docs)} documents.")
+    print(f"Retrieved {len(docs)} documents.", flush=True)
 
     if not docs:
-        print("No docs found — returning fallback message.")
-        return "No relevant ByteStrike documents were found for this question."
+        print("No docs found — returning fallback message.", flush=True)
+        # If no documents are found, immediately yield a fallback message
+        yield "No relevant ByteStrike documents were found for this question."
+        return # Exit the generator
 
-    context = "\n\n".join(d.page_content for d in docs)
+    # Prepare the input dictionary for the LangChain Runnable
+    chain_input = {
+        "question": query,
+        # The rag_chain expects the raw documents here for the formatter
+        "documents": docs 
+    }
 
-    # 2. Construct final prompt
-    final_prompt = prompt.format(context=context, question=query)
+    print("Starting LLM streaming...", flush=True)
 
-    print("Sending prompt to LLM...")
-
-    # 3. Call LLM asynchronously
-    response = await llm.ainvoke(final_prompt)
-
-    print("LLM response received.")
-    print("==============================\n")
-
-    return response.content
+    # 2. Call the chain asynchronously using astream()
+    # astream() returns an async generator
+    async for chunk in rag_chain.astream(chain_input):
+        # LangChain's astream() yields chunks, usually MessageChunks or string content.
+        # We only care about the final output of the chain, which is the LLM's content.
+        
+        # When streaming the final output, the chunk will be a BaseMessageChunk 
+        # (or similar object) that contains the text fragment in its 'content' attribute.
+        if hasattr(chunk, 'content') and chunk.content is not None:
+            yield chunk.content
+            
+    print("LLM streaming complete.", flush=True)
+    print("==============================\n", flush=True)

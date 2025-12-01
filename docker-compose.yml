@@ -1,0 +1,17 @@
+services:
+  slack-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: slack_rag_bot
+    restart: always
+    environment:
+      SLACK_BOT_TOKEN: "${SLACK_BOT_TOKEN}"
+      SLACK_APP_TOKEN: "${SLACK_APP_TOKEN}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+      HUGGINGFACE_API_KEY: "${HUGGINGFACE_API_KEY}"
+    ports:
+      - "8080:8080"
+
+    volumes:
+      - ./chroma_store:/app/chroma_store 
