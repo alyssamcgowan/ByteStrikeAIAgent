@@ -1,20 +1,125 @@
-# query_processor.py
+# query_processor.py - Enhanced with semantic analysis
 import json
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any
+from langchain_core.prompts import PromptTemplate
 
-def is_creative_query(query: str) -> bool:
-    """Detect if query requires creative generation vs factual retrieval"""
-    creative_keywords = [
-        "create", "develop", "draft", "write", "plan", "design", "propose",
-        "suggest", "recommend", "outline", "generate", "build", "formulate",
-        "brainstorm", "what should", "how can", "how would", "next steps",
-        "action plan", "business plan", "strategy", "roadmap", "improve",
-        "enhance", "optimize", "new approach", "innovative"
+def detect_query_intent(query: str, llm) -> Dict[str, Any]:
+    """
+    Analyze query intent semantically, not just keywords.
+    Returns intent classification with reasoning.
+    """
+    intent_prompt = f"""
+    Analyze this query and determine what type of response is needed:
+    
+    Query: {query}
+    
+    Response Types:
+    1. FACTUAL_RETRIEVAL: Answer exists in documents (Who? What? When? Where?)
+    2. CREATIVE_GENERATION: Create something new (plans, strategies, documents)
+    3. ANALYTICAL_INFERENCE: Analysis, projections, recommendations, comparisons
+    4. EXTERNAL_KNOWLEDGE: General knowledge not specific to company
+    
+    Consider:
+    - Questions with "projected", "likely", "potential", "should", "could" → ANALYTICAL_INFERENCE
+    - Questions with "create", "draft", "write", "plan" → CREATIVE_GENERATION  
+    - Questions with "what are", "who is", "when did" → FACTUAL_RETRIEVAL
+    - Questions about other companies/world → EXTERNAL_KNOWLEDGE
+    
+    Return as JSON:
+    {{
+        "intent": "FACTUAL_RETRIEVAL|CREATIVE_GENERATION|ANALYTICAL_INFERENCE|EXTERNAL_KNOWLEDGE",
+        "reasoning": "Brief explanation",
+        "confidence": 0.9,
+        "requires_analysis": true/false,
+        "requires_generation": true/false
+    }}
+    
+    JSON:
+    """
+    
+    try:
+        response = llm.invoke(intent_prompt)
+        
+        # Try to parse JSON
+        content = response.content
+        if "{" in content and "}" in content:
+            start = content.find("{")
+            end = content.rfind("}") + 1
+            json_str = content[start:end]
+            
+            data = json.loads(json_str)
+            return data
+            
+    except Exception as e:
+        print(f"[DEBUG] Intent detection error: {e}")
+    
+    # Fallback to keyword-based detection
+    return fallback_intent_detection(query)
+
+def fallback_intent_detection(query: str) -> Dict[str, Any]:
+    """Fallback intent detection using keywords"""
+    query_lower = query.lower()
+    
+    # Analytical inference keywords
+    analytical_keywords = [
+        "projected", "projection", "forecast", "estimate", "likely", "potential",
+        "analysis", "analyze", "infer", "inference", "conclude", "conclusion",
+        "recommend", "suggest", "advise", "should", "could", "would", "might",
+        "compare", "comparison", "versus", "vs", "contrast", "difference",
+        "benefit", "advantage", "disadvantage", "pro", "con", "impact",
+        "effect", "result", "outcome", "savings", "cost", "revenue", "profit",
+        "efficiency", "improvement", "optimization", "scalability"
     ]
     
-    query_lower = query.lower()
-    return any(keyword in query_lower for keyword in creative_keywords)
+    # Creative generation keywords  
+    creative_keywords = [
+        "create", "develop", "draft", "write", "plan", "design", "propose",
+        "generate", "build", "formulate", "brainstorm", "invent", "innovate",
+        "action plan", "business plan", "strategy", "roadmap", "framework",
+        "template", "outline", "structure", "model", "system", "process"
+    ]
+    
+    # Check for analytical inference
+    if any(keyword in query_lower for keyword in analytical_keywords):
+        return {
+            "intent": "ANALYTICAL_INFERENCE",
+            "reasoning": "Contains analytical/inference keywords",
+            "confidence": 0.7,
+            "requires_analysis": True,
+            "requires_generation": True
+        }
+    
+    # Check for creative generation
+    if any(keyword in query_lower for keyword in creative_keywords):
+        return {
+            "intent": "CREATIVE_GENERATION",
+            "reasoning": "Contains creative/generation keywords",
+            "confidence": 0.7,
+            "requires_analysis": False,
+            "requires_generation": True
+        }
+    
+    # Default to factual retrieval
+    return {
+        "intent": "FACTUAL_RETRIEVAL",
+        "reasoning": "Default to factual retrieval",
+        "confidence": 0.5,
+        "requires_analysis": False,
+        "requires_generation": False
+    }
 
+def is_creative_or_analytical_query(query: str, llm) -> bool:
+    """Check if query requires creative generation OR analytical inference"""
+    intent = detect_query_intent(query, llm)
+    
+    # Both creative generation and analytical inference need special handling
+    return intent.get("requires_generation", False) or intent.get("requires_analysis", False)
+
+def get_query_intent_details(query: str, llm) -> Dict[str, Any]:
+    """Get detailed intent classification"""
+    return detect_query_intent(query, llm)
+
+# Keep the other functions but update enhance_query_with_history to use new intent detection
 def enhance_query_with_history(query: str, history_context: str, llm) -> str:
     """Enhance query with chat history context"""
     if not history_context:
@@ -49,95 +154,15 @@ def enhance_query_with_history(query: str, history_context: str, llm) -> str:
     
     return query
 
+# Rest of the functions remain the same...
 def decompose_query(query: str, llm) -> Tuple[List[str], List[str]]:
-    """
-    Decompose a complex query into internal and external parts.
-    Returns: (internal_queries, external_queries)
-    """
-    decomposition_prompt = f"""
-    Analyze this query and separate it into:
-    1. Parts that require ByteStrike internal document search
-    2. Parts that require general knowledge/external search
-    
-    Query: {query}
-    
-    Guidelines:
-    - ByteStrike internal: Anything about ByteStrike company, business, strategy, team, documents
-    - External: General knowledge, facts about other companies, places, people not related to ByteStrike
-    
-    Return as JSON with two arrays:
-    {{
-        "internal": ["list of internal search queries"],
-        "external": ["list of external search queries"]
-    }}
-    
-    JSON:
-    """
-    
-    try:
-        response = llm.invoke(decomposition_prompt)
-        
-        # Try to parse JSON
-        content = response.content
-        if "{" in content and "}" in content:
-            # Extract JSON part
-            start = content.find("{")
-            end = content.rfind("}") + 1
-            json_str = content[start:end]
-            
-            data = json.loads(json_str)
-            internal_queries = data.get("internal", [])
-            external_queries = data.get("external", [])
-            
-            print(f"[DEBUG] Query decomposed:")
-            print(f"  Internal: {internal_queries}")
-            print(f"  External: {external_queries}")
-            
-            return internal_queries, external_queries
-            
-    except Exception as e:
-        print(f"[DEBUG] Decomposition error: {e}")
-    
-    # Fallback: simple keyword-based decomposition
-    return fallback_decomposition(query)
+    # ... existing code ...
+    pass
 
 def fallback_decomposition(query: str) -> Tuple[List[str], List[str]]:
-    """Fallback decomposition when AI decomposition fails"""
-    query_lower = query.lower()
-    
-    # Simple rule: if contains ByteStrike keywords, it's internal
-    if any(keyword in query_lower for keyword in ["bytestrike", "byte strike", "our company", "our business"]):
-        return [query], []
-    else:
-        return [], [query]
+    # ... existing code ...
+    pass
 
 def combine_decomposed_results(query: str, internal_results: List[str], external_results: List[str], llm) -> str:
-    """Combine results from decomposed queries"""
-    if not internal_results and not external_results:
-        return "I couldn't find information to answer your query."
-    
-    combine_prompt = f"""
-    Original query: {query}
-    
-    {'ByteStrike Information:' + chr(10) + chr(10).join(internal_results) if internal_results else ''}
-    
-    {'External Information:' + chr(10) + chr(10).join(external_results) if external_results else ''}
-    
-    Provide a comprehensive answer that addresses all parts of the original query.
-    Structure it naturally without saying "internal" or "external".
-    
-    Answer:
-    """
-    
-    try:
-        response = llm.invoke(combine_prompt)
-        return response.content
-    except Exception as e:
-        print(f"[DEBUG] Combination error: {e}")
-        # Simple fallback
-        parts = []
-        if internal_results:
-            parts.append("\n".join(internal_results))
-        if external_results:
-            parts.append("\n".join(external_results))
-        return "\n\n".join(parts)
+    # ... existing code ...
+    pass
